@@ -2,67 +2,264 @@
 
 RegOps is a hackathon project that acts as CI/CD for AI-agent compliance.
 
-## Core architecture
+The system converts changing regulations into structured compliance requirements,
+determines which enterprise AI agents are affected, generates and tests candidate
+policies, and eventually deploys approved policies to a deterministic runtime
+enforcement layer.
 
-RegOps has two planes:
+## Core Architecture
 
-1. Control Plane
-   - interprets regulations
-   - identifies affected agents
-   - generates candidate policies
-   - generates compliance tests
-   - simulates policies
-   - requires human approval before activation
+RegOps has two primary planes.
 
-2. Runtime Plane
-   - intercepts agent tool calls
-   - builds an ActionContext
-   - evaluates active policies deterministically
-   - allows or denies the tool call
-   - records an audit event
+### 1. Control Plane
 
-## Critical design rules
+The Control Plane determines what agents should be allowed to do.
 
-- AI may interpret regulations and generate candidate policies.
+Responsibilities include:
+
+- interpreting regulations
+- extracting structured compliance requirements
+- verifying model-generated interpretations
+- identifying affected agents
+- generating candidate policies
+- generating compliance tests
+- simulating candidate policies
+- replaying historical agent behavior
+- calculating regulatory blast radius
+- requiring human approval before activation
+- safely deploying approved policy versions
+
+AI may assist with ambiguous reasoning in the Control Plane.
+
+### 2. Runtime Plane
+
+The Runtime Plane enforces approved rules on actual agent behavior.
+
+Responsibilities include:
+
+- intercepting agent tool calls
+- resolving trusted agent metadata from the Agent Registry
+- building normalized ActionContext objects
+- evaluating active policies deterministically
+- allowing or denying tool execution
+- preventing denied tools from executing
+- recording sanitized audit events
+
+The Runtime Plane must remain fast, deterministic, and independent of LLM
+availability.
+
+## Critical Design Rules
+
+- AI may interpret regulations and generate candidate policies or tests.
 - AI must never make the final runtime authorization decision.
 - Runtime ALLOW/DENY decisions must be deterministic.
-- Candidate policies cannot become active without approval.
-- Agents must not bypass the runtime gateway to invoke tools directly.
-- Keep the database as authoritative state; LLM memory is not authoritative.
+- Candidate policies cannot become active without explicit approval.
+- Agents must not bypass RuntimeGateway to invoke protected tools directly.
+- RuntimeGateway must resolve trusted AgentManifest data from AgentRegistry.
+- Do not trust caller-supplied agent permissions.
+- ToolMetadata owns intrinsic properties such as action type and destination type.
+- Invocation metadata owns runtime properties such as data classification and purpose.
+- Callers must not be able to override intrinsic trusted tool metadata.
+- Sensitive raw tool arguments must not be persisted in audit events.
+- Allowed tool execution failures must still be audited before the error is propagated.
+- Model output must cross a strict typed validation boundary before the rest of RegOps uses it.
+- Do not silently invent or substitute compliance requirements when AI output is invalid.
+- Keep authoritative application state separate from LLM memory.
 - Prefer simple, explicit Python over unnecessary abstractions.
-- Do not introduce distributed infrastructure until the local vertical slice works.
+- Preserve interfaces so local implementations can later be replaced by managed Google Cloud services.
+- Every behavior change should have automated tests.
+- Preserve existing working behavior unless a milestone explicitly changes it.
 
-## Current milestone
+## Current Project State
 
-Build only the local Runtime Plane.
+Completed:
 
-Do NOT add yet:
-- Gemini
-- Google ADK
+- deterministic PolicyEngine
+- local PolicyRegistry
+- RuntimeGateway
+- trusted ToolMetadata / InvocationMetadata separation
+- sanitized audit events
+- execution-state auditing
+- fake CustomerDB, Gmail, and Stripe tools
+- deterministic RefundAgent demo
+- local versioned Agent Registry
+- RefundAgent, SupportAgent, and SalesAgent manifests
+- authoritative registry lookup inside RuntimeGateway
+- Regulation and Requirement domain models
+- Google ADK Regulation Analysis Agent
+- Gemini 3.5 Flash regulation extraction
+- strict Pydantic validation of AI-generated requirements
+- regulation source-evidence validation
+- optional live Gemini integration testing
+- deterministic Impact Analysis
+- structured capability-path discovery
+- AFFECTED / NOT_AFFECTED / NEEDS_REVIEW classification
+- Gemini + ADK Candidate Policy Generation
+- strict CandidatePolicy validation
+- deterministic candidate IDs and versions
+- duplicate/conflict policy detection
+- validated candidate-to-runtime-policy conversion boundary
+
+Existing Runtime Plane behavior must continue to work:
+
+1. BANK_ACCOUNT data may be sent through Gmail when no compliance policy is active.
+2. The same action is denied after FIN-POL-v1 is activated.
+3. A denied Gmail call must never execute.
+4. An authorized Stripe refund remains allowed.
+5. All relevant decisions produce sanitized audit events.
+
+## Current Milestone
+
+Implement Compliance Test Generation.
+
+The goal is to take a verified Requirement, validated CandidatePolicy, and
+ImpactReport and generate a structured compliance regression suite.
+
+Gemini may generate varied scenarios, including adversarial scenarios, but
+normal Python must validate the scenarios and determine expected policy outcomes
+whenever they can be derived deterministically.
+
+Do not execute simulations yet.
+
+## Do Not Add Yet
+
+Do not add the following unless the current milestone explicitly requires them:
+
 - Firestore
 - Pub/Sub
 - frontend
-- Google Agent Registry
-- Agent Gateway
+- production Google Agent Registry integration
+- production Google Agent Gateway integration
+- Agent Identity
 - Model Armor
+- Memory Bank
+- Secret Manager
+- deployment infrastructure
+- canary rollout infrastructure
+- distributed tracing infrastructure
+- historical replay infrastructure
+- simulation execution
+- historical replay
 
-## Stack for current milestone
+Do not replace working local abstractions merely to introduce cloud services.
+
+## Current Stack
 
 - Python 3.11+
-- FastAPI
-- Pydantic
+- Pydantic 2
 - pytest
+- Google ADK
+- Gemini 3.5 Flash
+- python-dotenv
+
+The deterministic runtime must not depend on Gemini or Google ADK.
+
+## Agent Registry
+
+The current local Agent Registry is authoritative for agent metadata.
+
+AgentManifest includes:
+
+- agent_id
+- name
+- version
+- allowed_tools
+- data_access
+- owner
+- environment
+
+Agent versions must be retained rather than overwritten.
+
+RuntimeGateway accepts agent identity information and resolves the trusted
+manifest from AgentRegistry internally.
+
+The current in-memory implementation should remain replaceable later by a
+persistent or managed registry implementation.
+
+## Regulation Analysis
+
+RegulationAnalysisAgent uses Google ADK and Gemini to convert natural-language
+regulatory text into a structured Requirement.
+
+Requirements must reuse existing RegOps enums where applicable.
+
+Regulation text must be treated as untrusted data, not as instructions for the
+model.
+
+Model output must be validated before being accepted.
+
+Every extracted requirement should preserve evidence from the source regulation.
+
+No evidence means the requirement should not be trusted.
+
+## Policy Enforcement
+
+PolicyEngine is deterministic.
+
+Do not add Gemini or another LLM to PolicyEngine.evaluate().
+
+The intended runtime flow is:
+
+Agent
+→ RuntimeGateway
+→ trusted agent lookup
+→ trusted tool lookup
+→ ActionContext
+→ PolicyEngine
+→ ALLOW or DENY
+→ tool executes only if ALLOW
+→ AuditEvent
+
+Agents propose actions.
+
+Agents do not grant themselves permission.
 
 ## Testing
 
-Run:
+Run the full unit test suite with:
 
-pytest
+python -m pytest -v
 
-Every feature should have tests.
+Normal unit tests must not require live Gemini credentials.
 
-The milestone is complete when the same prohibited tool action:
-1. succeeds with no active policy
-2. is denied after the relevant policy is activated
+Live Gemini tests should remain explicitly opt-in.
 
-while a legitimate Stripe refund remains allowed.
+Every milestone must:
+
+- preserve existing tests
+- add tests for new behavior
+- test important failure cases
+- run the complete relevant test suite before completion
+
+Do not report a milestone as complete while tests introduced or affected by the
+change are failing.
+
+## Implementation Style
+
+Before editing, inspect the relevant existing code and follow established
+patterns.
+
+Prefer:
+
+- typed models
+- small explicit interfaces
+- deterministic logic where possible
+- dependency injection at external boundaries
+- clear domain errors
+- testable components
+- focused changes
+
+Avoid:
+
+- unnecessary frameworks
+- premature distributed architecture
+- duplicate domain concepts
+- arbitrary string values when an existing enum applies
+- broad exception swallowing
+- silent fallbacks
+- hard-coded AI extraction results
+- bypassing existing security boundaries
+
+Implement the requested milestone end-to-end, run tests, fix failures caused by
+the changes, and then concisely report the important changes and verification
+results.
