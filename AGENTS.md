@@ -99,6 +99,15 @@ Completed:
 - deterministic candidate IDs and versions
 - duplicate/conflict policy detection
 - validated candidate-to-runtime-policy conversion boundary
+- Gemini + ADK Compliance Test Generation
+- prohibited, legitimate, adversarial, and edge-case scenario generation
+- deterministic expected-decision derivation
+- ComplianceTestSuite validation, deduplication, and coverage
+- isolated baseline vs candidate policy simulation
+- historical normalized action replay
+- deterministic compliance, utility, and adversarial scoring
+- regulatory blast-radius calculation
+- deterministic candidate PASS / FAIL evaluation
 
 Existing Runtime Plane behavior must continue to work:
 
@@ -110,16 +119,20 @@ Existing Runtime Plane behavior must continue to work:
 
 ## Current Milestone
 
-Implement Compliance Test Generation.
+Implement Human Approval and Policy Lifecycle.
 
-The goal is to take a verified Requirement, validated CandidatePolicy, and
-ImpactReport and generate a structured compliance regression suite.
+The goal is to take a VALIDATED CandidatePolicy and its completed
+PolicyEvaluationReport and place it into an explicit human-review workflow.
 
-Gemini may generate varied scenarios, including adversarial scenarios, but
-normal Python must validate the scenarios and determine expected policy outcomes
-whenever they can be derived deterministically.
+A passing evaluation may make a candidate eligible for review, but it must
+never automatically activate or deploy the policy.
 
-Do not execute simulations yet.
+Human approval must apply to the exact policy ID, version, and evaluated
+policy artifact.
+
+The milestone ends with an APPROVED policy candidate.
+
+Production activation and rollout belong to the next milestone.
 
 ## Do Not Add Yet
 
@@ -140,6 +153,11 @@ Do not add the following unless the current milestone explicitly requires them:
 - historical replay infrastructure
 - simulation execution
 - historical replay
+- production activation
+- deployment controller
+- dry-run rollout
+- canary rollout
+- rollback infrastructure
 
 Do not replace working local abstractions merely to introduce cloud services.
 

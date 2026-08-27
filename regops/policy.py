@@ -45,6 +45,11 @@ class PolicyRegistry:
             if policy.active
         )
 
+    def registered_policies(self) -> tuple[Policy, ...]:
+        return tuple(
+            policy.model_copy(deep=True) for policy in self._policies.values()
+        )
+
 
 class PolicyEngine:
     def evaluate(
@@ -73,4 +78,3 @@ class PolicyEngine:
             decision=Decision.ALLOW,
             reason="No active policy denies this action.",
         )
-

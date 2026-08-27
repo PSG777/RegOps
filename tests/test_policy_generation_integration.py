@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from regops.config import load_local_environment
+from regops.config import gemini_configuration_available, load_local_environment
 from regops.impact import ImpactAnalyzer
 from regops.models import PolicyStatus
 from regops.policy_generation import PolicyGenerationAgent
@@ -13,15 +13,16 @@ from regops.tools import FakeToolRegistry
 
 
 load_local_environment()
-RUN_LIVE_TEST = os.getenv("RUN_GEMINI_INTEGRATION_TESTS") == "1" and bool(
-    os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+RUN_LIVE_TEST = (
+    os.getenv("RUN_GEMINI_INTEGRATION_TESTS") == "1"
+    and gemini_configuration_available()
 )
 
 
 @pytest.mark.integration
 @pytest.mark.skipif(
     not RUN_LIVE_TEST,
-    reason="Set RUN_GEMINI_INTEGRATION_TESTS=1 and a Gemini API key to run",
+    reason="Enable live Gemini tests and configure Vertex AI or an API key to run",
 )
 def test_gemini_generates_validated_candidate_policy():
     impact_report = ImpactAnalyzer(

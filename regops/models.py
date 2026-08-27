@@ -60,6 +60,10 @@ class RiskSeverity(StrEnum):
 class PolicyStatus(StrEnum):
     CANDIDATE = "CANDIDATE"
     VALIDATED = "VALIDATED"
+    READY_FOR_REVIEW = "READY_FOR_REVIEW"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    CHANGES_REQUESTED = "CHANGES_REQUESTED"
     INVALID = "INVALID"
 
 
@@ -84,6 +88,41 @@ class TestCaseStatus(StrEnum):
     READY = "READY"
     NEEDS_REVIEW = "NEEDS_REVIEW"
     REJECTED = "REJECTED"
+
+
+class SimulationMode(StrEnum):
+    BASELINE = "BASELINE"
+    CANDIDATE = "CANDIDATE"
+
+
+class TestExecutionStatus(StrEnum):
+    PASSED = "PASSED"
+    FAILED = "FAILED"
+    NEEDS_REVIEW = "NEEDS_REVIEW"
+    ERROR = "ERROR"
+
+
+class ReplayChange(StrEnum):
+    UNCHANGED = "UNCHANGED"
+    NEWLY_DENIED = "NEWLY_DENIED"
+    NEWLY_ALLOWED = "NEWLY_ALLOWED"
+
+
+class PolicyEvaluationStatus(StrEnum):
+    PASS = "PASS"
+    FAIL = "FAIL"
+
+
+class ReviewDecision(StrEnum):
+    APPROVE = "APPROVE"
+    REJECT = "REJECT"
+    REQUEST_CHANGES = "REQUEST_CHANGES"
+
+
+class ReviewerRole(StrEnum):
+    COMPLIANCE_OFFICER = "COMPLIANCE_OFFICER"
+    ADMIN = "ADMIN"
+    VIEWER = "VIEWER"
 
 
 class AgentManifest(BaseModel):
@@ -283,3 +322,146 @@ class ComplianceTestSuite(BaseModel):
     needs_review: tuple[ComplianceScenarioIssue, ...]
     rejected: tuple[ComplianceScenarioIssue, ...]
     coverage: ComplianceCoverageSummary
+
+
+class SimulationTestResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    test_id: str = Field(min_length=1)
+    category: TestCategory
+    agent_id: str = Field(min_length=1)
+    agent_version: str = Field(min_length=1)
+    tool_name: str = Field(min_length=1)
+    expected_decision: Decision
+    actual_decision: Decision
+    execution_status: TestExecutionStatus
+    tool_executed: bool
+    policy_id_used: str | None = None
+    reason: str = Field(min_length=1)
+
+
+class SimulationRun(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    simulation_id: str = Field(min_length=1)
+    requirement_id: str = Field(min_length=1)
+    test_suite_id: str = Field(min_length=1)
+    policy_id: str = Field(min_length=1)
+    policy_version: int = Field(ge=1)
+    mode: SimulationMode
+    total_ready_tests: int = Field(ge=0)
+    passed_tests: int = Field(ge=0)
+    failed_tests: int = Field(ge=0)
+    needs_review_tests: int = Field(ge=0)
+    error_tests: int = Field(ge=0)
+    individual_results: tuple[SimulationTestResult, ...]
+
+
+class HistoricalAction(BaseModel):
+    """Normalized action facts for policy replay; never contains tool payloads."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    action_id: str = Field(min_length=1)
+    agent_id: str = Field(min_length=1)
+    agent_version: str = Field(min_length=1)
+    tool_name: str = Field(min_length=1)
+    data_classifications: frozenset[DataClassification]
+    purpose: Purpose
+    original_decision: Decision | None = None
+    original_execution_status: ExecutionStatus | None = None
+
+
+class HistoricalReplayResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    action_id: str = Field(min_length=1)
+    agent_id: str = Field(min_length=1)
+    agent_version: str = Field(min_length=1)
+    tool_name: str = Field(min_length=1)
+    baseline_decision: Decision
+    candidate_decision: Decision
+    change: ReplayChange
+    baseline_policy_id: str | None = None
+    candidate_policy_id: str | None = None
+
+
+class HistoricalReplaySummary(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    total_actions: int = Field(ge=0)
+    unchanged_actions: int = Field(ge=0)
+    newly_denied_actions: int = Field(ge=0)
+    newly_allowed_actions: int = Field(ge=0)
+    decision_change_rate: float = Field(ge=0, le=1)
+    affected_agent_ids: tuple[str, ...]
+    affected_tool_names: tuple[str, ...]
+    individual_results: tuple[HistoricalReplayResult, ...]
+
+
+class PolicyEvaluationReport(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    evaluation_id: str = Field(min_length=1)
+    policy_id: str = Field(min_length=1)
+    policy_version: int = Field(ge=1)
+    policy_fingerprint: str = Field(min_length=64, max_length=64)
+    requirement_id: str = Field(min_length=1)
+    test_suite_id: str = Field(min_length=1)
+    baseline_run: SimulationRun
+    candidate_run: SimulationRun
+    compliance_score_before: float = Field(ge=0, le=1)
+    compliance_score_after: float = Field(ge=0, le=1)
+    utility_score_before: float = Field(ge=0, le=1)
+    utility_score_after: float = Field(ge=0, le=1)
+    adversarial_score_before: float = Field(ge=0, le=1)
+    adversarial_score_after: float = Field(ge=0, le=1)
+    overall_correctness_before: float = Field(ge=0, le=1)
+    overall_correctness_after: float = Field(ge=0, le=1)
+    critical_violations_before: int = Field(ge=0)
+    critical_violation_count: int = Field(ge=0)
+    historical_replay_summary: HistoricalReplaySummary
+    blast_radius: float = Field(ge=0, le=1)
+    final_evaluation_status: PolicyEvaluationStatus
+
+
+class ReviewerIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    reviewer_id: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    role: ReviewerRole
+
+
+class ReviewEligibility(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    eligible: bool
+    policy_id: str = Field(min_length=1)
+    policy_version: int = Field(ge=1)
+    policy_fingerprint: str = Field(min_length=64, max_length=64)
+    evaluation_id: str = Field(min_length=1)
+    reasons: tuple[str, ...]
+
+
+class PolicyReviewRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    review_id: str = Field(min_length=1)
+    policy_id: str = Field(min_length=1)
+    policy_version: int = Field(ge=1)
+    policy_fingerprint: str = Field(min_length=64, max_length=64)
+    evaluation_id: str = Field(min_length=1)
+    reviewer: ReviewerIdentity
+    decision: ReviewDecision
+    comment: str = Field(min_length=1)
+    reviewed_at: datetime
+    previous_status: PolicyStatus
+    resulting_status: PolicyStatus
+
+
+class PolicyReviewOutcome(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    candidate: CandidatePolicy
+    record: PolicyReviewRecord
