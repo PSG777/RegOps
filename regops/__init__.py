@@ -17,6 +17,13 @@ from regops.approval import (
     policy_fingerprint,
 )
 from regops.gateway import RuntimeGateway
+from regops.deployment import (
+    DeploymentAuthorizationError,
+    DeploymentController,
+    DeploymentError,
+    DeploymentValidationError,
+    RollbackError,
+)
 from regops.impact import ImpactAnalyzer
 from regops.models import (
     ActionContext,
@@ -30,6 +37,9 @@ from regops.models import (
     ComplianceTestCase,
     ComplianceTestSuite,
     Environment,
+    DeploymentOperatorIdentity,
+    DeploymentOperatorRole,
+    DeploymentStatus,
     HistoricalAction,
     HistoricalReplayResult,
     HistoricalReplaySummary,
@@ -37,6 +47,7 @@ from regops.models import (
     ImpactStatus,
     InvocationMetadata,
     Policy,
+    PolicyDeployment,
     PolicyDecision,
     PolicyEffect,
     PolicyEvaluationReport,
@@ -89,6 +100,13 @@ __all__ = [
     "ComplianceTestCase",
     "ComplianceTestSuite",
     "Environment",
+    "DeploymentAuthorizationError",
+    "DeploymentController",
+    "DeploymentError",
+    "DeploymentOperatorIdentity",
+    "DeploymentOperatorRole",
+    "DeploymentStatus",
+    "DeploymentValidationError",
     "FakeToolRegistry",
     "ImpactAnalyzer",
     "ImpactReport",
@@ -101,6 +119,7 @@ __all__ = [
     "InMemoryAgentRegistry",
     "LEGITIMATE_REFUND_REQUEST",
     "Policy",
+    "PolicyDeployment",
     "PolicyApprovalError",
     "PolicyApprovalService",
     "PolicyArtifactMismatchError",
@@ -129,6 +148,7 @@ __all__ = [
     "ReviewerAuthorizationError",
     "ReviewerIdentity",
     "ReviewerRole",
+    "RollbackError",
     "RuntimeGateway",
     "SimulationHarness",
     "SimulationMode",

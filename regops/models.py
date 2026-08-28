@@ -125,6 +125,21 @@ class ReviewerRole(StrEnum):
     VIEWER = "VIEWER"
 
 
+class DeploymentStatus(StrEnum):
+    PENDING = "PENDING"
+    VALIDATING = "VALIDATING"
+    DEPLOYED = "DEPLOYED"
+    ACTIVE = "ACTIVE"
+    FAILED = "FAILED"
+    ROLLED_BACK = "ROLLED_BACK"
+
+
+class DeploymentOperatorRole(StrEnum):
+    ADMIN = "ADMIN"
+    DEPLOYMENT_OPERATOR = "DEPLOYMENT_OPERATOR"
+    VIEWER = "VIEWER"
+
+
 class AgentManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -158,6 +173,7 @@ class InvocationMetadata(BaseModel):
 
 class Policy(BaseModel):
     policy_id: str
+    version: int = Field(default=1, ge=1)
     description: str
     active: bool = False
     protected_classification: DataClassification
@@ -465,3 +481,30 @@ class PolicyReviewOutcome(BaseModel):
 
     candidate: CandidatePolicy
     record: PolicyReviewRecord
+
+
+class DeploymentOperatorIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    operator_id: str = Field(min_length=1)
+    display_name: str = Field(min_length=1)
+    role: DeploymentOperatorRole
+
+
+class PolicyDeployment(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    deployment_id: str = Field(min_length=1)
+    policy_id: str = Field(min_length=1)
+    policy_version: int = Field(ge=1)
+    policy_fingerprint: str = Field(min_length=64, max_length=64)
+    approval_review_id: str = Field(min_length=1)
+    environment: Environment
+    operator: DeploymentOperatorIdentity
+    status: DeploymentStatus
+    deployed_at: datetime | None = None
+    activated_at: datetime | None = None
+    rolled_back_at: datetime | None = None
+    previous_active_policy_id: str | None = None
+    previous_active_policy_version: int | None = Field(default=None, ge=1)
+    failure_reason: str | None = None

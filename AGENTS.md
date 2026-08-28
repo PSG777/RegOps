@@ -108,6 +108,13 @@ Completed:
 - deterministic compliance, utility, and adversarial scoring
 - regulatory blast-radius calculation
 - deterministic candidate PASS / FAIL evaluation
+- human policy review workflow
+- deterministic review eligibility
+- policy fingerprinting
+- APPROVE / REJECT / REQUEST_CHANGES lifecycle
+- reviewer-role authorization
+- approval audit records
+- Vertex AI authentication through Application Default Credentials
 
 Existing Runtime Plane behavior must continue to work:
 
@@ -119,20 +126,20 @@ Existing Runtime Plane behavior must continue to work:
 
 ## Current Milestone
 
-Implement Human Approval and Policy Lifecycle.
+Implement Safe Policy Deployment, Activation, and Rollback.
 
-The goal is to take a VALIDATED CandidatePolicy and its completed
-PolicyEvaluationReport and place it into an explicit human-review workflow.
+The goal is to take an APPROVED policy candidate and deploy the exact approved
+artifact into the runtime PolicyRegistry through a deterministic deployment
+controller.
 
-A passing evaluation may make a candidate eligible for review, but it must
-never automatically activate or deploy the policy.
+Approval must remain separate from deployment.
 
-Human approval must apply to the exact policy ID, version, and evaluated
-policy artifact.
+Only the approved policy version and fingerprint may be deployed.
 
-The milestone ends with an APPROVED policy candidate.
+Deployment must support validation, activation, version tracking, and rollback
+to a previously active policy.
 
-Production activation and rollout belong to the next milestone.
+Gemini must not participate in deployment decisions or runtime activation.
 
 ## Do Not Add Yet
 

@@ -245,12 +245,13 @@ class PolicyGenerationAgent:
 
 
 def candidate_to_runtime_policy(candidate: CandidatePolicy) -> Policy:
-    if candidate.status != PolicyStatus.VALIDATED:
+    if candidate.status not in {PolicyStatus.VALIDATED, PolicyStatus.APPROVED}:
         raise CandidatePolicyConversionError(
-            "Only a VALIDATED candidate can be converted to a runtime Policy."
+            "Only a VALIDATED or APPROVED candidate can be converted to a runtime Policy."
         )
     return Policy(
         policy_id=candidate.policy_id,
+        version=candidate.version,
         description=candidate.description,
         active=False,
         protected_classification=candidate.protected_classification,
