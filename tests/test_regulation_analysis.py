@@ -17,6 +17,7 @@ from regops.regulation_analysis import (
     RegulationAnalysisError,
     RequirementExtractionOutput,
 )
+from regops.cloud import ContentScreeningError
 from regops.regulations import SAMPLE_FINANCIAL_REGULATION
 
 
@@ -43,6 +44,24 @@ class StubModelBoundary:
     async def generate(self, analysis_request: str) -> str:
         self.requests.append(analysis_request)
         return self.response
+
+
+class BlockingScreening:
+    def screen(self, text: str):
+        raise ContentScreeningError("blocked before model")
+
+
+def test_screening_blocks_untrusted_text_before_model_boundary():
+    boundary = StubModelBoundary(json.dumps(valid_requirement_payload()))
+
+    with pytest.raises(ContentScreeningError, match="before model"):
+        asyncio.run(
+            RegulationAnalysisAgent(boundary, BlockingScreening()).analyze(
+                SAMPLE_FINANCIAL_REGULATION
+            )
+        )
+
+    assert boundary.requests == []
 
 
 def test_requirement_validates_existing_policy_enums_and_confidence():

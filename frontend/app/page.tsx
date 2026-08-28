@@ -75,7 +75,7 @@ export default function Dashboard() {
     <div className="shell">
       <header className="topbar">
         <div className="brand"><span className="mark">RO</span><div><b>RegOps</b><small>Regulatory operations control room</small></div></div>
-        <div className="topmeta"><span className="live-dot" /> Local deterministic runtime <button className="text-button" onClick={() => void reset()} disabled={busy !== null}>Reset demo</button></div>
+        <div className="topmeta"><span className="live-dot" /> {data.infrastructure.environment} deterministic runtime <button className="text-button" onClick={() => void reset()} disabled={busy !== null || data.infrastructure.environment === "cloud"}>Reset demo</button></div>
       </header>
 
       <main>
@@ -95,6 +95,19 @@ export default function Dashboard() {
           <Score label="Adversarial robustness" {...data.evaluation.adversarial} />
           <Score label="Critical violations" {...data.evaluation.critical_violations} percentValue={false} />
           <div className="score blast"><span>Operational blast radius</span><strong>{percent(data.evaluation.blast_radius)}</strong><small>{replay.newly_denied} of {replay.total_actions} historical actions change</small></div>
+        </section>
+
+        <section className="panel infrastructure">
+          <header><div><p className="eyebrow">Production infrastructure</p><h2>Cloud readiness & enterprise fleet</h2></div><Status tone="good">{data.infrastructure.environment.toUpperCase()}</Status></header>
+          <div className="infra-grid">{[
+            ["Vertex AI", data.infrastructure.vertex],
+            ["Firestore", data.infrastructure.firestore],
+            ["Pub/Sub", data.infrastructure.pubsub],
+            ["Agent Registry", data.infrastructure.agent_registry],
+            ["Model Armor", data.infrastructure.model_armor],
+            ["Runtime", data.infrastructure.runtime],
+          ].map(([name, status]) => <div key={name}><span>{name}</span><strong>{status}</strong></div>)}</div>
+          <div className="fleet-evidence"><p>Registry source: <b>{data.enterprise_fleet.registry_source}</b> · Input screening: <b>{data.infrastructure.input_screening}</b></p>{data.enterprise_fleet.agents.map(agent => <code key={`${agent.agent_id}-${agent.version}`}>{agent.name} v{agent.version} {agent.status}</code>)}</div>
         </section>
 
         <div className="grid-main">
@@ -132,7 +145,7 @@ export default function Dashboard() {
 
         <div className="grid-main final-row"><section className="panel replay"><header><div><p className="eyebrow">Historical replay</p><h2>Operational blast radius</h2></div><strong>{percent(replay.change_rate)}</strong></header><div className="replay-bar"><span style={{ width: `${replay.unchanged / replay.total_actions * 100}%` }} /><i style={{ width: `${replay.newly_denied / replay.total_actions * 100}%` }} /></div><div className="replay-grid"><div><strong>{replay.total_actions}</strong><span>Analyzed</span></div><div><strong>{replay.unchanged}</strong><span>Unchanged</span></div><div><strong>{replay.newly_denied}</strong><span>Newly denied</span></div><div><strong>{replay.newly_allowed}</strong><span>Newly allowed</span></div></div><p>Decision change measures operational impact—not whether every changed action was malicious.</p><small>Affected: {replay.affected_agents.join(", ")} · {replay.affected_tools.join(", ")}</small></section><section className="panel activity"><header><div><p className="eyebrow">Evidence stream</p><h2>Recent activity</h2></div></header><ol>{data.activity.slice(-8).reverse().map((item, index) => <li key={`${item.kind}-${index}`}><span>{item.kind}</span><p>{item.message}</p><time>{item.timestamp ? new Date(item.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "evidence"}</time></li>)}</ol></section></div>
       </main>
-      <footer><span>RegOps / Local deterministic demonstration</span><code>{data.evaluation.evaluation_id}</code></footer>
+      <footer><span>RegOps / {data.infrastructure.environment} deterministic demonstration</span><code>{data.evaluation.evaluation_id}</code></footer>
     </div>
   );
 }

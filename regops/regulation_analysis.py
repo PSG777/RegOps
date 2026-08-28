@@ -8,6 +8,7 @@ from google.genai import types
 from pydantic import BaseModel, Field, ValidationError
 
 from regops.config import GEMINI_MODEL
+from regops.cloud import ContentScreeningService, LocalContentScreeningService
 from regops.models import (
     ActionType,
     DataClassification,
@@ -92,10 +93,16 @@ class ADKRegulationModelBoundary:
 
 
 class RegulationAnalysisAgent:
-    def __init__(self, model_boundary: RegulationModelBoundary | None = None) -> None:
+    def __init__(
+        self,
+        model_boundary: RegulationModelBoundary | None = None,
+        content_screening: ContentScreeningService | None = None,
+    ) -> None:
         self._model_boundary = model_boundary or ADKRegulationModelBoundary()
+        self._content_screening = content_screening or LocalContentScreeningService()
 
     async def analyze(self, regulation: Regulation) -> Requirement:
+        self._content_screening.screen(regulation.source_text)
         analysis_request = self._build_analysis_request(regulation)
         try:
             raw_output = await self._model_boundary.generate(analysis_request)

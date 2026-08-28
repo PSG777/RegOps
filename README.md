@@ -28,3 +28,10 @@ are deterministic and offline. They do not call Gemini or require Vertex AI.
 
 Set `REGOPS_TELEMETRY_EXPORTER=console` before starting Uvicorn to print local
 OpenTelemetry spans. The default exporter is no-op.
+
+## Google Cloud profile
+
+Set `REGOPS_ENV=cloud` to select Firestore, Pub/Sub, Model Armor, Google Cloud
+Agent Registry, Cloud Logging, and Vertex AI via ADC. Explicit cloud mode never
+falls back to local infrastructure. See [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md),
+[ARCHITECTURE.md](ARCHITECTURE.md), and [DEMO.md](DEMO.md).

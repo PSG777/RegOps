@@ -46,6 +46,21 @@ export interface TestCase {
 
 export interface DashboardData {
   case_id: string;
+  infrastructure: {
+    environment: string;
+    firestore: string;
+    pubsub: string;
+    agent_registry: string;
+    model_armor: string;
+    vertex: string;
+    runtime: string;
+    registry_source: string;
+    input_screening: string;
+  };
+  enterprise_fleet: {
+    registry_source: string;
+    agents: { agent_id: string; name: string; version: string; status: string }[];
+  };
   pipeline: { stage: string; status: string }[];
   regulation: {
     regulation_id: string;

@@ -27,7 +27,11 @@ def test_health_endpoint_succeeds(client):
     response = client.get("/api/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "service": "regops-api"}
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["service"] == "regops-api"
+    assert payload["infrastructure"]["environment"] == "local"
+    assert payload["infrastructure"]["firestore"] == "in-memory"
 
 
 def test_dashboard_returns_complete_structured_projection(client):
@@ -44,6 +48,7 @@ def test_dashboard_returns_complete_structured_projection(client):
     assert dashboard["review"]["decision"] == "APPROVE"
     assert dashboard["deployment"]["status"] == "ACTIVE"
     assert dashboard["runtime"]["recent_decisions"]
+    assert dashboard["enterprise_fleet"]["registry_source"] == "InMemoryAgentRegistry"
 
 
 def test_dashboard_composition_never_constructs_gemini_boundaries(monkeypatch):

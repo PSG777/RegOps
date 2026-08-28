@@ -1,24 +1,39 @@
 import json
+import logging
 from datetime import datetime, timezone
 from threading import RLock
 from typing import Any
 
 from opentelemetry import trace
+from pydantic import BaseModel, ConfigDict
 
 from regops.agent import LEGITIMATE_REFUND_REQUEST, UNSAFE_EMAIL_REQUEST, RefundAgent
 from regops.approval import PolicyApprovalService, policy_fingerprint
+from regops.cloud import (
+    ArtifactRepository,
+    EventBus,
+    InfrastructureStatus,
+    LifecycleEvent,
+    LifecycleEventType,
+    local_infrastructure_status,
+)
 from regops.deployment import DeploymentController
 from regops.gateway import RuntimeGateway
 from regops.impact import ImpactAnalyzer
 from regops.models import (
     AuditEvent,
     CandidatePolicy,
+    ComplianceTestSuite,
     Decision,
     DeploymentOperatorIdentity,
     DeploymentOperatorRole,
     Environment,
     PolicyDeployment,
+    PolicyEvaluationReport,
     PolicyReviewRecord,
+    Regulation,
+    Requirement,
+    ImpactReport,
     ReviewDecision,
     ReviewerIdentity,
     ReviewerRole,
@@ -29,8 +44,9 @@ from regops.policy_generation import (
     CandidatePolicyGenerationOutput,
     CandidatePolicyIdentity,
     CandidatePolicyValidator,
+    candidate_to_runtime_policy,
 )
-from regops.registry import build_local_agent_registry
+from regops.registry import AgentRegistry, build_local_agent_registry
 from regops.regulations import (
     SAMPLE_FINANCIAL_REGULATION,
     SAMPLE_VERIFIED_FINANCIAL_REQUIREMENT,
@@ -43,6 +59,26 @@ from regops.tools import FakeToolRegistry
 
 
 DEMO_TIME = datetime(2026, 8, 27, 16, 30, tzinfo=timezone.utc)
+logger = logging.getLogger(__name__)
+
+
+class DemoCaseSnapshot(BaseModel):
+    """Strict persisted representation of the authoritative demo lifecycle."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    case_id: str
+    regulation: Regulation
+    requirement: Requirement
+    impact: ImpactReport
+    validated_candidate: CandidatePolicy
+    candidate: CandidatePolicy
+    test_suite: ComplianceTestSuite
+    evaluation: PolicyEvaluationReport
+    review: PolicyReviewRecord
+    deployment: PolicyDeployment
+    audit_events: tuple[AuditEvent, ...] = ()
+    input_screening: str = "PASSED"
 
 
 class DemoArtifactNotFoundError(LookupError):
@@ -54,11 +90,77 @@ class DemoState:
 
     case_id = "DEMO-FINANCIAL-001"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        infrastructure: InfrastructureStatus | None = None,
+        artifact_repository: ArtifactRepository | None = None,
+        event_bus: EventBus | None = None,
+    ) -> None:
         self._lock = RLock()
+        self.infrastructure = infrastructure or local_infrastructure_status()
+        self._artifact_repository = artifact_repository
+        self._event_bus = event_bus
+        self._reset_enabled = True
         self.reset()
 
+    @classmethod
+    def from_snapshot(
+        cls,
+        snapshot: DemoCaseSnapshot,
+        agents: AgentRegistry,
+        infrastructure: InfrastructureStatus,
+        artifact_repository: ArtifactRepository,
+        event_bus: EventBus,
+    ) -> "DemoState":
+        """Load persisted state without generating, approving, or deploying artifacts."""
+
+        state = cls.__new__(cls)
+        state._lock = RLock()
+        state.infrastructure = infrastructure.model_copy(
+            update={"input_screening": snapshot.input_screening}
+        )
+        state._artifact_repository = artifact_repository
+        state._event_bus = event_bus
+        state._reset_enabled = False
+        state.regulation = snapshot.regulation
+        state.requirement = snapshot.requirement
+        state.impact = snapshot.impact
+        state.validated_candidate = snapshot.validated_candidate
+        state.candidate = snapshot.candidate
+        state.test_suite = snapshot.test_suite
+        state.evaluation = snapshot.evaluation
+        state.review = snapshot.review
+        state.deployment = snapshot.deployment
+        state.agents = agents
+        state.tools = FakeToolRegistry()
+        state.registry = PolicyRegistry()
+        state.registry.register_and_activate(candidate_to_runtime_policy(state.candidate))
+        state.gateway = RuntimeGateway(state.registry, state.tools, state.agents)
+        state.gateway.audit_events.extend(snapshot.audit_events)
+        state.refund_agent = RefundAgent(state.gateway)
+        return state
+
+    def snapshot(self) -> DemoCaseSnapshot:
+        return DemoCaseSnapshot(
+            case_id=self.case_id,
+            regulation=self.regulation,
+            requirement=self.requirement,
+            impact=self.impact,
+            validated_candidate=self.validated_candidate,
+            candidate=self.candidate,
+            test_suite=self.test_suite,
+            evaluation=self.evaluation,
+            review=self.review,
+            deployment=self.deployment,
+            audit_events=tuple(self.gateway.audit_events),
+        )
+
     def reset(self) -> dict[str, Any]:
+        if not getattr(self, "_reset_enabled", True):
+            raise RuntimeError(
+                "Cloud state cannot be reset through the API; use explicit bootstrap tooling."
+            )
         with self._lock:
             self.regulation = SAMPLE_FINANCIAL_REGULATION
             self.requirement = SAMPLE_VERIFIED_FINANCIAL_REQUIREMENT
@@ -219,6 +321,19 @@ class DemoState:
                     "rollback_available": self.deployment.previous_active_policy_version is not None,
                 },
                 "runtime": {"recent_decisions": self._runtime_events()},
+                "infrastructure": self.infrastructure.model_dump(mode="json"),
+                "enterprise_fleet": {
+                    "registry_source": self.infrastructure.registry_source,
+                    "agents": [
+                        {
+                            "agent_id": item.agent_id,
+                            "name": item.name,
+                            "version": item.version,
+                            "status": "REGISTERED",
+                        }
+                        for item in self.agents.list_agents()
+                    ],
+                },
                 "activity": self._activity(),
             }
 
@@ -235,6 +350,7 @@ class DemoState:
         ):
             workflow = self.refund_agent.run(request)
             event = workflow.audit_events[-1]
+            self._record_runtime_event(event)
             try:
                 current = trace.get_current_span()
                 current.set_attribute("regops.tool_name", event.context.tool_name)
@@ -246,6 +362,37 @@ class DemoState:
             except Exception:
                 pass  # Telemetry cannot alter the completed gateway decision.
             return self._runtime_event(event)
+
+    def _record_runtime_event(self, event: AuditEvent) -> None:
+        """Persist/publish after authorization; failures never change its decision."""
+
+        try:
+            if self._artifact_repository is not None:
+                self._artifact_repository.save(
+                    "audit_events", str(event.event_id), event
+                )
+            if self._event_bus is not None and event.decision.decision == Decision.DENY:
+                self._event_bus.publish(
+                    LifecycleEvent(
+                        event_type=LifecycleEventType.RUNTIME_ACTION_DENIED,
+                        case_id=self.case_id,
+                        requirement_id=self.requirement.requirement_id,
+                        policy_id=event.decision.policy_id,
+                        policy_version=self.candidate.version,
+                        agent_id=event.context.agent_id,
+                        audit_event_id=str(event.event_id),
+                    )
+                )
+        except Exception:
+            logger.exception(
+                "Runtime evidence export failed",
+                extra={
+                    "case_id": self.case_id,
+                    "agent_id": event.context.agent_id,
+                    "tool": event.context.tool_name,
+                    "decision": event.decision.decision.value,
+                },
+            )
 
     def lineage(self, audit_event_id: str) -> dict[str, Any]:
         with self._lock:

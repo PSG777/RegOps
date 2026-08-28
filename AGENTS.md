@@ -122,6 +122,13 @@ Completed:
 - deployment authorization and audit records
 - deterministic rollback to a prior active policy version
 - runtime enforcement driven by deployed policy state
+- FastAPI API layer
+- Next.js judge-facing dashboard
+- deterministic offline dashboard state
+- audit lineage from runtime denial to source regulation
+- interactive unsafe/legitimate runtime demo
+- OpenTelemetry instrumentation
+- production frontend build
 
 Existing Runtime Plane behavior must continue to work:
 
@@ -133,31 +140,25 @@ Existing Runtime Plane behavior must continue to work:
 
 ## Current Milestone
 
-Implement the RegOps API, judge-facing dashboard, audit lineage, and local
-observability.
+Productionize RegOps on Google Cloud while preserving the existing local and
+offline architecture.
 
-The goal is to expose the existing RegOps workflow through a thin FastAPI
-application and a polished Next.js frontend without rewriting the domain logic.
+Add cloud-backed infrastructure behind explicit interfaces:
 
-The UI should make the full compliance lifecycle understandable:
+- Firestore persistence
+- Pub/Sub lifecycle events
+- Cloud Logging
+- Model Armor screening
+- Google Cloud Agent Registry integration
+- Cloud Run deployment
 
-Regulation
-→ Requirement
-→ Impact
-→ Candidate Policy
-→ Compliance Tests
-→ Simulation / Replay
-→ Human Approval
-→ Deployment
-→ Runtime Enforcement
-→ Audit Lineage
+Normal unit tests and local demos must continue to work without Google Cloud.
 
-The frontend is a presentation and interaction layer over existing domain
-services. It must not duplicate policy, approval, deployment, or authorization
-logic in JavaScript.
+Do not move Gemini, Firestore, Pub/Sub, Model Armor, or other network calls into
+the deterministic runtime authorization hot path.
 
-This milestone should also add structured observability around backend request
-and workflow execution while preserving sanitized audit behavior.
+Agent Gateway and Agent Identity are stretch integrations only after the core
+cloud deployment works.
 
 ## Do Not Add Yet
 
