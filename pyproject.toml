@@ -8,13 +8,22 @@ version = "0.1.0"
 description = "Local deterministic runtime plane for RegOps"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.115,<1",
     "google-adk>=2,<3",
+    "opentelemetry-api>=1.30,<2",
+    "opentelemetry-instrumentation-fastapi>=0.51b0,<1",
+    "opentelemetry-sdk>=1.30,<2",
     "pydantic>=2,<3",
     "python-dotenv>=1,<2",
+    "uvicorn[standard]>=0.34,<1",
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=8,<9"]
+test = ["httpx>=0.28,<1", "pytest>=8,<9"]
+
+[tool.setuptools.packages.find]
+include = ["regops", "regops.*"]
+namespaces = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

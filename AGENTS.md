@@ -115,6 +115,13 @@ Completed:
 - reviewer-role authorization
 - approval audit records
 - Vertex AI authentication through Application Default Credentials
+- deterministic DeploymentController
+- exact approved-artifact / fingerprint verification
+- runtime PolicyRegistry versioning
+- safe runtime policy activation
+- deployment authorization and audit records
+- deterministic rollback to a prior active policy version
+- runtime enforcement driven by deployed policy state
 
 Existing Runtime Plane behavior must continue to work:
 
@@ -126,20 +133,31 @@ Existing Runtime Plane behavior must continue to work:
 
 ## Current Milestone
 
-Implement Safe Policy Deployment, Activation, and Rollback.
+Implement the RegOps API, judge-facing dashboard, audit lineage, and local
+observability.
 
-The goal is to take an APPROVED policy candidate and deploy the exact approved
-artifact into the runtime PolicyRegistry through a deterministic deployment
-controller.
+The goal is to expose the existing RegOps workflow through a thin FastAPI
+application and a polished Next.js frontend without rewriting the domain logic.
 
-Approval must remain separate from deployment.
+The UI should make the full compliance lifecycle understandable:
 
-Only the approved policy version and fingerprint may be deployed.
+Regulation
+→ Requirement
+→ Impact
+→ Candidate Policy
+→ Compliance Tests
+→ Simulation / Replay
+→ Human Approval
+→ Deployment
+→ Runtime Enforcement
+→ Audit Lineage
 
-Deployment must support validation, activation, version tracking, and rollback
-to a previously active policy.
+The frontend is a presentation and interaction layer over existing domain
+services. It must not duplicate policy, approval, deployment, or authorization
+logic in JavaScript.
 
-Gemini must not participate in deployment decisions or runtime activation.
+This milestone should also add structured observability around backend request
+and workflow execution while preserving sanitized audit behavior.
 
 ## Do Not Add Yet
 
@@ -147,7 +165,6 @@ Do not add the following unless the current milestone explicitly requires them:
 
 - Firestore
 - Pub/Sub
-- frontend
 - production Google Agent Registry integration
 - production Google Agent Gateway integration
 - Agent Identity
@@ -156,7 +173,6 @@ Do not add the following unless the current milestone explicitly requires them:
 - Secret Manager
 - deployment infrastructure
 - canary rollout infrastructure
-- distributed tracing infrastructure
 - historical replay infrastructure
 - simulation execution
 - historical replay
