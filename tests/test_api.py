@@ -34,6 +34,75 @@ def test_health_endpoint_succeeds(client):
     assert payload["infrastructure"]["firestore"] == "in-memory"
 
 
+@pytest.mark.parametrize(
+    ("agent_id", "name"),
+    [
+        ("refund-agent", "RefundAgent"),
+        ("support-agent", "SupportAgent"),
+        ("sales-agent", "SalesAgent"),
+    ],
+)
+def test_agent_discovery_resolves_authoritative_manifest(client, agent_id, name):
+    response = client.get(f"/api/agents/{agent_id}")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "agent_id": agent_id,
+        "name": name,
+        "version": "1.0.0",
+        "status": "AVAILABLE",
+        "interface": "HTTP_JSON",
+    }
+
+
+def test_agent_discovery_returns_safe_404_for_unknown_agent(client):
+    response = client.get("/api/agents/not-present")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Agent is not available."}
+    assert "not-present" not in response.text
+
+
+def test_agent_discovery_performs_no_tool_execution_or_auditing(client):
+    tool_names = ("customer_db.read", "gmail.send", "stripe.refund")
+    executions_before = {
+        name: len(demo_state.tools.resolve(name).executions) for name in tool_names
+    }
+    audits_before = len(demo_state.gateway.audit_events)
+
+    for agent_id in ("refund-agent", "support-agent", "sales-agent"):
+        assert client.get(f"/api/agents/{agent_id}").status_code == 200
+
+    assert {
+        name: len(demo_state.tools.resolve(name).executions) for name in tool_names
+    } == executions_before
+    assert len(demo_state.gateway.audit_events) == audits_before
+
+
+def test_agent_discovery_exposes_only_sanitized_metadata(client, monkeypatch):
+    secret = "agent-discovery-secret-value"
+    monkeypatch.setenv("GOOGLE_API_KEY", secret)
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "private-adc-file.json")
+
+    response = client.get("/api/agents/refund-agent")
+    serialized = response.text
+
+    assert set(response.json()) == {
+        "agent_id",
+        "name",
+        "version",
+        "status",
+        "interface",
+    }
+    assert secret not in serialized
+    assert "private-adc-file.json" not in serialized
+    assert "allowed_tools" not in serialized
+    assert "data_access" not in serialized
+    assert "arguments" not in serialized
+    assert "merchant@example.com" not in serialized
+    assert "****6789" not in serialized
+
+
 def test_dashboard_returns_complete_structured_projection(client):
     response = client.get("/api/demo/dashboard")
     dashboard = response.json()

@@ -24,32 +24,68 @@ gcloud pubsub topics create "$PUBSUB_TOPIC" --project "$PROJECT_ID"
 gcloud artifacts repositories create "$AR_REPOSITORY" --repository-format=docker --location="$REGION" --project="$PROJECT_ID"
 ```
 
-Create the Model Armor template and RefundAgent, SupportAgent, and SalesAgent records
-with the current `gcloud model-armor` and Agent Registry commands for the chosen
-regions. Agent Registry owns cloud identity/discovery. RegOps-specific trusted
-`allowed_tools`, `data_access`, owner, environment, and version metadata is stored
-in Firestore keyed by a SHA-256 hash of the Agent Registry resource name; it is
-always validated as `AgentManifest` when loaded.
+Create the Model Armor template with the current `gcloud model-armor` command for
+the chosen region. Agent Registry registration follows the initial backend deploy
+below because every Service requires a real interface URL.
+
+On first bootstrap, each exact display name must resolve to exactly one generated
+Agent. Bootstrap stores a validated cloud binding containing the exact Google
+Agent name/ID and the corresponding RegOps ID/version. It also stores RegOps-specific
+`allowed_tools`, `data_access`, owner, environment, and version metadata in
+Firestore keyed by a SHA-256 hash of the Google Agent resource name. Subsequent
+loads validate the immutable binding rather than trusting display name alone.
 
 Grant the backend service account only the capabilities it needs: Firestore data
 read/write, Pub/Sub publisher, Model Armor user, Agent Registry reader, Vertex AI
 user, and Logs Writer. Use the narrow predefined/custom roles available in your
 organization; do not grant Owner or Editor.
 
-Build and deploy the backend:
+Build and deploy the backend initially in local mode. This makes the read-only
+discovery interfaces available without requiring Agent Registry or Firestore at
+application startup:
 
 ```bash
 gcloud builds submit --tag "$REGION-docker.pkg.dev/$PROJECT_ID/$AR_REPOSITORY/backend:latest" --project "$PROJECT_ID" .
-gcloud run deploy "$BACKEND_SERVICE" --image "$REGION-docker.pkg.dev/$PROJECT_ID/$AR_REPOSITORY/backend:latest" --region "$REGION" --service-account "$BACKEND_SA" --set-env-vars "REGOPS_ENV=cloud,GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=global,REGOPS_FIRESTORE_DATABASE=(default),REGOPS_PUBSUB_TOPIC=$PUBSUB_TOPIC,REGOPS_MODEL_ARMOR_LOCATION=$REGION,REGOPS_MODEL_ARMOR_TEMPLATE=regops-control-plane-screening,REGOPS_AGENT_REGISTRY_LOCATION=$REGION,REGOPS_FRONTEND_ORIGIN=https://frontend-placeholder.run.app" --project "$PROJECT_ID"
+gcloud run deploy "$BACKEND_SERVICE" --image "$REGION-docker.pkg.dev/$PROJECT_ID/$AR_REPOSITORY/backend:latest" --region "$REGION" --service-account "$BACKEND_SA" --set-env-vars "REGOPS_ENV=local" --project "$PROJECT_ID"
 export BACKEND_URL="$(gcloud run services describe "$BACKEND_SERVICE" --region "$REGION" --project "$PROJECT_ID" --format='value(status.url)')"
 ```
 
+Confirm that `BACKEND_URL` is the actual HTTPS URL returned by Cloud Run, then
+register the discovery interfaces. Check first because `services create` is not
+an upsert:
+
+```bash
+gcloud agent-registry services list --project "$PROJECT_ID" --location global --format="table(name,displayName)"
+gcloud agent-registry services create refund-agent --project "$PROJECT_ID" --location global --display-name RefundAgent --description "RegOps demo refund agent" --agent-spec-type no-spec --interfaces "url=$BACKEND_URL/api/agents/refund-agent,protocolBinding=http-json"
+gcloud agent-registry services create support-agent --project "$PROJECT_ID" --location global --display-name SupportAgent --description "RegOps demo support agent" --agent-spec-type no-spec --interfaces "url=$BACKEND_URL/api/agents/support-agent,protocolBinding=http-json"
+gcloud agent-registry services create sales-agent --project "$PROJECT_ID" --location global --display-name SalesAgent --description "RegOps demo sales agent" --agent-spec-type no-spec --interfaces "url=$BACKEND_URL/api/agents/sales-agent,protocolBinding=http-json"
+gcloud agent-registry agents list --project "$PROJECT_ID" --location global --format="table(name,agentId,displayName,version)"
+```
+
+These are `NO_SPEC` HTTP/JSON discovery interfaces. They expose sanitized
+identity metadata only; they are not A2A registrations and do not claim that the
+three agents can be invoked through Agent Registry. In particular, SupportAgent
+and SalesAgent remain manifests without workflow implementations. The executable
+RefundAgent demonstrations remain the RuntimeGateway-backed `/api/demo/runtime/*`
+routes.
+
+Google Agent Registry identity is distinct from RegOps logical identity. Google
+owns the generated Agent resource `name` and globally unique `agentId`, and a
+`NO_SPEC` Agent may have no cloud version. RegOps retains logical IDs such as
+`refund-agent` and version `1.0.0` in its trusted `AgentManifest`.
+
 Bootstrap is explicit and idempotent; it never deletes/reset data. Run it from an
 ADC-authenticated operator environment (or a one-off Cloud Run job) after creating
-the three remote Agent Registry entries:
+the three Agent Registry Services:
 
 ```bash
 REGOPS_ENV=cloud python -m regops.cloud_bootstrap --seed-demo
+```
+
+After bootstrap succeeds, update the existing backend service to cloud mode:
+
+```bash
+gcloud run services update "$BACKEND_SERVICE" --region "$REGION" --project "$PROJECT_ID" --set-env-vars "REGOPS_ENV=cloud,GOOGLE_GENAI_USE_VERTEXAI=TRUE,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=global,REGOPS_FIRESTORE_DATABASE=(default),REGOPS_PUBSUB_TOPIC=$PUBSUB_TOPIC,REGOPS_MODEL_ARMOR_LOCATION=$REGION,REGOPS_MODEL_ARMOR_TEMPLATE=regops-control-plane-screening,REGOPS_AGENT_REGISTRY_LOCATION=global"
 ```
 
 Build the frontend with the public backend URL and deploy it, then update the

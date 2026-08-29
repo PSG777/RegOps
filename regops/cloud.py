@@ -65,6 +65,7 @@ class ArtifactRepository(Protocol):
         self, collection: str, artifact_id: str, model_type: type[DomainModel]
     ) -> DomainModel: ...
     def exists(self, collection: str, artifact_id: str) -> bool: ...
+    def list(self, collection: str, model_type: type[DomainModel]) -> tuple[DomainModel, ...]: ...
 
 
 class InMemoryArtifactRepository:
@@ -85,6 +86,15 @@ class InMemoryArtifactRepository:
 
     def exists(self, collection: str, artifact_id: str) -> bool:
         return (collection, artifact_id) in self._documents
+
+    def list(
+        self, collection: str, model_type: type[DomainModel]
+    ) -> tuple[DomainModel, ...]:
+        return tuple(
+            model_type.model_validate(document)
+            for (stored_collection, _), document in self._documents.items()
+            if stored_collection == collection
+        )
 
 
 class FirestoreArtifactRepository:
@@ -118,6 +128,14 @@ class FirestoreArtifactRepository:
     def readiness(self) -> bool:
         next(iter(self._client.collections()), None)
         return True
+
+    def list(
+        self, collection: str, model_type: type[DomainModel]
+    ) -> tuple[DomainModel, ...]:
+        return tuple(
+            model_type.model_validate(snapshot.to_dict())
+            for snapshot in self._client.collection(collection).stream()
+        )
 
 
 class EventBus(Protocol):
@@ -234,6 +252,38 @@ class GoogleModelArmorScreeningService:
         return screening
 
 
+class CloudAgentBinding(BaseModel):
+    """Validated link between Google-managed and RegOps logical identity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    cloud_agent_name: str = Field(min_length=1)
+    cloud_agent_id: str = Field(min_length=1)
+    cloud_display_name: str = Field(min_length=1)
+    cloud_version: str | None = None
+    regops_agent_id: str = Field(min_length=1)
+    regops_agent_version: str = Field(min_length=1)
+
+
+def cloud_agent_binding_id(agent_id: str, version: str) -> str:
+    return f"{agent_id}--{version}"
+
+
+def binding_from_remote(remote: Any, manifest: AgentManifest) -> CloudAgentBinding:
+    raw_cloud_version = getattr(remote, "version", None)
+    cloud_version = (
+        str(raw_cloud_version).strip() if raw_cloud_version is not None else None
+    ) or None
+    return CloudAgentBinding(
+        cloud_agent_name=str(remote.name),
+        cloud_agent_id=str(remote.agent_id),
+        cloud_display_name=str(remote.display_name),
+        cloud_version=cloud_version,
+        regops_agent_id=manifest.agent_id,
+        regops_agent_version=manifest.version,
+    )
+
+
 class GoogleCloudAgentRegistry(AgentRegistry):
     """Cloud discovery plus Firestore-owned trusted RegOps manifest metadata."""
 
@@ -254,28 +304,39 @@ class GoogleCloudAgentRegistry(AgentRegistry):
         self._metadata = metadata_repository
 
     def readiness(self) -> bool:
-        next(iter(self._client.list_agents(parent=self._parent)), None)
+        self.list_agents()
         return True
 
     def remote_agents(self) -> tuple[Any, ...]:
         return tuple(self._client.list_agents(parent=self._parent))
 
     def list_agents(self) -> tuple[AgentManifest, ...]:
+        remotes = {str(item.name): item for item in self.remote_agents()}
         manifests = []
-        for remote in self._client.list_agents(parent=self._parent):
-            resource_name = str(remote.name)
-            manifest = self._metadata.load(
-                "agent_manifests", firestore_document_id(resource_name), AgentManifest
-            )
-            remote_identity = (
-                str(getattr(remote, "agent_id", "")),
-                str(getattr(remote, "display_name", "")),
-                str(getattr(remote, "version", "")),
-            )
-            local_identity = (manifest.agent_id, manifest.name, manifest.version)
-            if remote_identity != local_identity:
+        for binding in self._metadata.list("cloud_agent_bindings", CloudAgentBinding):
+            remote = remotes.get(binding.cloud_agent_name)
+            if remote is None:
                 raise CloudInfrastructureError(
-                    f"Agent Registry identity does not match trusted metadata for {resource_name}."
+                    "Bound Google Agent resource is no longer discoverable: "
+                    f"{binding.cloud_agent_name}."
+                )
+            if str(remote.agent_id) != binding.cloud_agent_id:
+                raise CloudInfrastructureError(
+                    "Bound Google Agent ID changed for "
+                    f"{binding.cloud_agent_name}."
+                )
+            manifest = self._metadata.load(
+                "agent_manifests",
+                firestore_document_id(binding.cloud_agent_name),
+                AgentManifest,
+            )
+            if (
+                manifest.agent_id != binding.regops_agent_id
+                or manifest.version != binding.regops_agent_version
+            ):
+                raise CloudInfrastructureError(
+                    "Trusted RegOps manifest does not match its cloud binding for "
+                    f"{binding.cloud_agent_name}."
                 )
             manifests.append(manifest)
         return tuple(manifests)

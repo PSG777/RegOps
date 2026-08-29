@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 from regops.api import create_app
 from regops.application import ApplicationServices
 from regops.cloud import (
+    CloudAgentBinding,
+    CloudInfrastructureError,
     ContentScreeningError,
     GoogleCloudAgentRegistry,
     GooglePubSubEventBus,
@@ -15,12 +17,14 @@ from regops.cloud import (
     LifecycleEvent,
     LifecycleEventType,
     LocalContentScreeningService,
+    cloud_agent_binding_id,
     firestore_document_id,
 )
+from regops.cloud_bootstrap import bootstrap_cloud_agent_bindings
 from regops.config import RegOpsConfiguration, RegOpsEnvironment, load_regops_configuration
 from regops.demo_state import DemoState
 from regops.models import AgentManifest, Regulation
-from regops.registry import build_local_agent_registry
+from regops.registry import build_local_agent_registry, local_enterprise_manifests
 
 
 CLOUD_VARIABLES = (
@@ -105,17 +109,44 @@ def test_local_screening_is_offline_and_rejects_empty_input():
         screening.screen("  ")
 
 
-def test_cloud_agent_registry_validates_firestore_metadata():
+def remote_agent(manifest, *, suffix="managed", agent_id=None, version=None):
+    return SimpleNamespace(
+        name=f"projects/p/locations/l/agents/{manifest.agent_id}-{suffix}",
+        agent_id=agent_id or f"urn:agent:google:{manifest.agent_id}:{suffix}",
+        display_name=manifest.name,
+        version=version,
+    )
+
+
+def demo_remote_agents(*, refund_version=None):
+    return tuple(
+        remote_agent(
+            manifest,
+            version=refund_version if manifest.agent_id == "refund-agent" else "",
+        )
+        for manifest in local_enterprise_manifests()
+    )
+
+
+def test_cloud_agent_registry_uses_binding_and_retains_logical_identity():
     repository = InMemoryArtifactRepository()
     manifest = build_local_agent_registry().get_agent("refund-agent")
-    remote = SimpleNamespace(
-        name="projects/p/locations/l/agents/refund",
-        agent_id=manifest.agent_id,
-        display_name=manifest.name,
-        version=manifest.version,
+    remote = remote_agent(manifest, version="")
+    binding = CloudAgentBinding(
+        cloud_agent_name=remote.name,
+        cloud_agent_id=remote.agent_id,
+        cloud_display_name=remote.display_name,
+        cloud_version=None,
+        regops_agent_id=manifest.agent_id,
+        regops_agent_version=manifest.version,
     )
     repository.save(
         "agent_manifests", firestore_document_id(remote.name), manifest
+    )
+    repository.save(
+        "cloud_agent_bindings",
+        cloud_agent_binding_id(manifest.agent_id, manifest.version),
+        binding,
     )
 
     class Client:
@@ -127,6 +158,90 @@ def test_cloud_agent_registry_validates_firestore_metadata():
 
     assert isinstance(loaded, AgentManifest)
     assert loaded == manifest
+    assert loaded.agent_id == "refund-agent"
+    assert loaded.version == "1.0.0"
+    assert remote.agent_id != loaded.agent_id
+    assert remote.version == ""
+
+
+def test_initial_display_name_discovery_creates_validated_bindings():
+    repository = InMemoryArtifactRepository()
+
+    bindings = bootstrap_cloud_agent_bindings(demo_remote_agents(), repository)
+
+    assert len(bindings) == 3
+    refund = next(item for item in bindings if item.regops_agent_id == "refund-agent")
+    assert refund.cloud_agent_id.startswith("urn:agent:google:")
+    assert refund.cloud_version is None
+    assert repository.exists(
+        "cloud_agent_bindings", cloud_agent_binding_id("refund-agent", "1.0.0")
+    )
+
+
+def test_initial_discovery_reports_missing_display_name_without_writes():
+    repository = InMemoryArtifactRepository()
+    remotes = tuple(
+        item for item in demo_remote_agents() if item.display_name != "SalesAgent"
+    )
+
+    with pytest.raises(CloudInfrastructureError, match="SalesAgent"):
+        bootstrap_cloud_agent_bindings(remotes, repository)
+
+    assert repository.list("cloud_agent_bindings", CloudAgentBinding) == ()
+
+
+def test_initial_discovery_rejects_duplicate_display_names():
+    repository = InMemoryArtifactRepository()
+    remotes = demo_remote_agents()
+    duplicate = remote_agent(local_enterprise_manifests()[0], suffix="duplicate")
+
+    with pytest.raises(CloudInfrastructureError, match="Ambiguous.*RefundAgent"):
+        bootstrap_cloud_agent_bindings(remotes + (duplicate,), repository)
+
+
+@pytest.mark.parametrize(
+    ("field", "message"),
+    (("name", "resource name changed"), ("agent_id", "Agent ID changed")),
+)
+def test_existing_binding_rejects_changed_managed_identity(field, message):
+    repository = InMemoryArtifactRepository()
+    remotes = list(demo_remote_agents())
+    bootstrap_cloud_agent_bindings(tuple(remotes), repository)
+    refund = remotes[0]
+    setattr(refund, field, getattr(refund, field) + "-changed")
+
+    with pytest.raises(CloudInfrastructureError, match=message):
+        bootstrap_cloud_agent_bindings(tuple(remotes), repository)
+
+
+def test_existing_binding_does_not_rely_on_mutable_display_name():
+    repository = InMemoryArtifactRepository()
+    remotes = list(demo_remote_agents())
+    bootstrap_cloud_agent_bindings(tuple(remotes), repository)
+    remotes[0].display_name = "Renamed in cloud console"
+
+    bindings = bootstrap_cloud_agent_bindings(tuple(remotes), repository)
+
+    assert next(
+        item for item in bindings if item.regops_agent_id == "refund-agent"
+    ).cloud_display_name == "RefundAgent"
+
+
+def test_binding_and_manifest_documents_are_strictly_revalidated():
+    repository = InMemoryArtifactRepository()
+    bootstrap_cloud_agent_bindings(demo_remote_agents(), repository)
+    binding_id = cloud_agent_binding_id("refund-agent", "1.0.0")
+    repository._documents[("cloud_agent_bindings", binding_id)]["untrusted"] = True
+
+    with pytest.raises(ValueError):
+        repository.load("cloud_agent_bindings", binding_id, CloudAgentBinding)
+
+    manifest = local_enterprise_manifests()[0]
+    remote = demo_remote_agents()[0]
+    manifest_id = firestore_document_id(remote.name)
+    repository._documents[("agent_manifests", manifest_id)]["version"] = None
+    with pytest.raises(ValueError):
+        repository.load("agent_manifests", manifest_id, AgentManifest)
 
 
 def test_cloud_app_loads_snapshot_without_reset_or_generation():

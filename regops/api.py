@@ -1,19 +1,31 @@
 import logging
-from typing import Any
+from typing import Any, Literal
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from pydantic import BaseModel, ConfigDict
 
 from regops.application import ApplicationServices, build_demo_state
 from regops.config import RegOpsConfiguration, load_regops_configuration
 from regops.demo_state import DemoArtifactNotFoundError, DemoState
+from regops.registry import AgentNotFoundError
 from regops.telemetry import configure_telemetry
 
 
 logger = logging.getLogger(__name__)
 configure_telemetry()
+
+
+class AgentDiscoveryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    agent_id: str
+    name: str
+    version: str
+    status: Literal["AVAILABLE"] = "AVAILABLE"
+    interface: Literal["HTTP_JSON"] = "HTTP_JSON"
 
 
 def create_app(
@@ -58,6 +70,23 @@ def create_app(
             "service": "regops-api",
             "infrastructure": state.infrastructure.model_dump(mode="json"),
         }
+
+    @application.get(
+        "/api/agents/{agent_id}", response_model=AgentDiscoveryResponse
+    )
+    def discover_agent(agent_id: str) -> AgentDiscoveryResponse:
+        try:
+            manifest = state.agents.get_agent(agent_id)
+        except AgentNotFoundError as error:
+            raise HTTPException(
+                status_code=404, detail="Agent is not available."
+            ) from error
+
+        return AgentDiscoveryResponse(
+            agent_id=manifest.agent_id,
+            name=manifest.name,
+            version=manifest.version,
+        )
 
     @application.get("/api/demo/dashboard")
     def dashboard() -> dict[str, Any]:
