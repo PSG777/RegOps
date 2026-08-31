@@ -3,9 +3,9 @@ steps:
     args:
       - build
       - --build-arg
-      - NEXT_PUBLIC_REGOPS_API_URL=${_NEXT_PUBLIC_REGOPS_API_URL}
+      - NEXT_PUBLIC_REGOPS_API_URL=${_REGOPS_API_URL}
       - -t
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/frontend:latest
+      - us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/regops-frontend:latest
       - .
 images:
-  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/frontend:latest
+  - us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/regops-frontend:latest

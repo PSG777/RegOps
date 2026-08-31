@@ -8,7 +8,11 @@ from google.genai import types
 from pydantic import BaseModel, Field, ValidationError
 
 from regops.config import GEMINI_MODEL
-from regops.cloud import ContentScreeningService, LocalContentScreeningService
+from regops.cloud import (
+    ContentScreeningService,
+    LocalContentScreeningService,
+    ScreeningResult,
+)
 from regops.models import (
     ActionType,
     DataClassification,
@@ -102,7 +106,15 @@ class RegulationAnalysisAgent:
         self._content_screening = content_screening or LocalContentScreeningService()
 
     async def analyze(self, regulation: Regulation) -> Requirement:
-        self._content_screening.screen(regulation.source_text)
+        _screening, requirement = await self.analyze_with_screening(regulation)
+        return requirement
+
+    async def analyze_with_screening(
+        self, regulation: Regulation
+    ) -> tuple[ScreeningResult, Requirement]:
+        """Screen once, then return the result with the validated requirement."""
+
+        screening = self._content_screening.screen(regulation.source_text)
         analysis_request = self._build_analysis_request(regulation)
         try:
             raw_output = await self._model_boundary.generate(analysis_request)
@@ -115,7 +127,7 @@ class RegulationAnalysisAgent:
             raise RegulationAnalysisError(
                 "Model output is not a valid supported requirement."
             ) from error
-        return requirement
+        return screening, requirement
 
     @staticmethod
     def _build_analysis_request(regulation: Regulation) -> str:

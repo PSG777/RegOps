@@ -1,0 +1,10 @@
+"use client";
+
+import { PageState, Status, useDashboard } from "@/components/regops";
+
+export default function Fleet() {
+  const state = useDashboard();
+  if (!state.data) return <PageState error={state.error} retry={state.reload} />;
+  const { data } = state;
+  return <main className="page fleet-page"><header className="page-title"><div><p className="eyebrow">Enterprise visibility</p><h1>Enterprise Agent Fleet</h1><p>Source: {data.enterprise_fleet.registry_source}</p></div><div className="count-callout"><strong>{data.enterprise_fleet.agents.length}</strong><span>registered agents</span></div></header><section className="fleet-list">{data.enterprise_fleet.agents.map(agent => { const impact = data.impact.agents.find(item => item.agent_id === agent.agent_id && item.agent_version === agent.version); return <article key={`${agent.agent_id}-${agent.version}`}><div className="fleet-agent-head"><div className="agent-icon">{agent.name.slice(0,2).toUpperCase()}</div><div><h2>{agent.name}</h2><code>{agent.agent_id} · version {agent.version}</code></div><Status tone={agent.status === "AVAILABLE" ? "good" : "neutral"}>{agent.status}</Status>{impact && <Status tone={impact.status === "AFFECTED" ? "risk" : impact.status === "NEEDS_REVIEW" ? "warn" : "neutral"}>{impact.status}</Status>}</div><div className="fleet-agent-body"><div><span>Sensitive classifications</span><strong>{impact?.relevant_data_classifications.join(", ") || "No governed data detected"}</strong></div><div><span>Relevant tools</span><strong>{impact?.risky_tools.join(", ") || "None"}</strong></div><div className="wide"><span>Capability paths</span>{impact?.capability_paths.length ? impact.capability_paths.map((path,i) => <div className="capability-path" key={`${path.tool_name}-${i}`}><span>{path.data_classification}</span><i>→</i><span>{agent.name}</span><i>→</i><span>{path.tool_name}</span><i>→</i><span>{path.destination_type}</span></div>) : <p>No path intersects this requirement.</p>}</div></div></article>})}</section></main>;
+}

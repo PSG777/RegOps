@@ -5,13 +5,26 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from regops.application import ApplicationServices, build_demo_state
+from regops.application import (
+    ApplicationServices,
+    build_cloud_services,
+    build_demo_state,
+)
+from regops.cloud import ContentScreeningError, LocalContentScreeningService
 from regops.config import RegOpsConfiguration, load_regops_configuration
 from regops.demo_state import DemoArtifactNotFoundError, DemoState
+from regops.policy_generation import PolicyGenerationError
+from regops.preview import (
+    RegulationAnalysisPreview,
+    RegulationAnalysisPreviewService,
+    build_preview_service,
+)
 from regops.registry import AgentNotFoundError
+from regops.regulation_analysis import RegulationAnalysisAgent, RegulationAnalysisError
 from regops.telemetry import configure_telemetry
+from regops.test_generation import TestGenerationError
 
 
 logger = logging.getLogger(__name__)
@@ -28,13 +41,33 @@ class AgentDiscoveryResponse(BaseModel):
     interface: Literal["HTTP_JSON"] = "HTTP_JSON"
 
 
+class RegulationAnalysisRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    text: str = Field(min_length=1)
+
+
 def create_app(
     configuration: RegOpsConfiguration | None = None,
     *,
     services: ApplicationServices | None = None,
+    preview_service: RegulationAnalysisPreviewService | None = None,
 ) -> FastAPI:
     config = configuration or load_regops_configuration()
-    state = build_demo_state(config, services=services)
+    resolved_services = services
+    if config.environment.value == "cloud" and resolved_services is None:
+        resolved_services = build_cloud_services(config)
+    state = build_demo_state(config, services=resolved_services)
+    screening = (
+        resolved_services.screening
+        if resolved_services is not None
+        else LocalContentScreeningService()
+    )
+    analysis_preview = preview_service or build_preview_service(
+        state.agents,
+        state.tools,
+        RegulationAnalysisAgent(content_screening=screening),
+    )
     application = FastAPI(title="RegOps API", version="0.1.0")
     application.state.demo_state = state
     application.state.configuration = config
@@ -107,6 +140,41 @@ def create_app(
     @application.get("/api/demo/lineage/{audit_event_id}")
     def lineage(audit_event_id: str) -> dict[str, Any]:
         return state.lineage(audit_event_id)
+
+    @application.post(
+        "/api/regulations/analyze",
+        response_model=RegulationAnalysisPreview,
+    )
+    async def analyze_regulation(
+        request: RegulationAnalysisRequest,
+    ) -> RegulationAnalysisPreview:
+        if not request.text.strip():
+            raise HTTPException(
+                status_code=422,
+                detail="Regulation text must not be empty.",
+            )
+        try:
+            return await analysis_preview.analyze(request.text)
+        except ContentScreeningError as error:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Input screening rejected the regulation: {error}",
+            ) from error
+        except RegulationAnalysisError as error:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Regulation interpretation or requirement validation failed: {error}",
+            ) from error
+        except PolicyGenerationError as error:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Candidate policy generation or validation failed: {error}",
+            ) from error
+        except TestGenerationError as error:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Compliance test generation or validation failed: {error}",
+            ) from error
 
     logger.info(
         "RegOps application started",
