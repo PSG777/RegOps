@@ -24,8 +24,6 @@ Every runtime decision can be traced back to its policy, requirement, and source
 
 ## Architecture
 
-## Architecture
-
 ```mermaid
 flowchart TB
     subgraph CP["Control Plane — AI Assisted"]
